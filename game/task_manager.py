@@ -215,16 +215,29 @@ class TaskManager:
             return False
         if isinstance(new_status, str):
             new_status = TaskStatus.from_string(new_status)
+
+        if new_status == task.status:
+            return True
+
         if new_status == TaskStatus.PENDING:
             task.reset()
         elif new_status == TaskStatus.IN_PROGRESS:
             if task.status == TaskStatus.PENDING:
                 task.start()
+            elif task.status in [TaskStatus.COMPLETED, TaskStatus.CANCELLED]:
+                task.status = TaskStatus.IN_PROGRESS
+                if not task.started_at:
+                    task.started_at = time.time()
+                task.updated_at = time.time()
         elif new_status == TaskStatus.COMPLETED:
             if task.status == TaskStatus.IN_PROGRESS:
                 task.complete()
             elif task.status == TaskStatus.PENDING:
                 task.start()
+                task.complete()
+            elif task.status == TaskStatus.CANCELLED:
+                task.status = TaskStatus.IN_PROGRESS
+                task.started_at = time.time()
                 task.complete()
         elif new_status == TaskStatus.CANCELLED:
             task.cancel()
@@ -234,7 +247,7 @@ class TaskManager:
         updated = []
         for task in self.tasks.values():
             if task.status == TaskStatus.IN_PROGRESS:
-                if station_type is None or task.station_type == station_type:
+                if station_type is None or task.station_type is None or task.station_type == station_type:
                     task.increment_progress(amount)
                     if task.status == TaskStatus.COMPLETED:
                         updated.append(task)

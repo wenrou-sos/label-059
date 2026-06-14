@@ -392,6 +392,8 @@ class TaskManagerUI:
         self.task_cards = []
         self.selected_task = None
         self.editing_task = None
+        self.scroll_offset = 0
+        self.scroll_speed = 30
 
         self.panel_x = 100
         self.panel_y = 50
@@ -618,8 +620,18 @@ class TaskManagerUI:
         self.task_manager.clear_completed()
         self._refresh_task_cards()
 
+    def _get_task_list_y(self):
+        if self.form_visible:
+            return self.panel_y + 410
+        else:
+            return self.panel_y + 220
+
+    def _get_task_list_height(self):
+        return self.panel_y + self.panel_h - 30 - self._get_task_list_y()
+
     def _refresh_task_cards(self):
         self.task_cards.clear()
+        self.all_tasks = []
 
         status_filter = self.status_filter.get_selected_key()
         if status_filter == 'all':
@@ -635,7 +647,7 @@ class TaskManagerUI:
 
         sort_by = self.sort_selector.get_selected_key() or 'created_at'
 
-        tasks = self.task_manager.list_tasks(
+        self.all_tasks = self.task_manager.list_tasks(
             status_filter=status_filter,
             priority_filter=priority_filter,
             station_filter=station_filter,
@@ -643,21 +655,31 @@ class TaskManagerUI:
         )
 
         card_x = self.panel_x + 20
-        card_y = self.panel_y + 410
-        card_w = self.panel_w - 40
+        card_w = self.panel_w - 60
         card_h = 95
 
-        for i, task in enumerate(tasks):
-            if card_y + card_h > self.panel_y + self.panel_h - 20:
+        max_scroll = max(0, len(self.all_tasks) * (card_h + 5) - self._get_task_list_height())
+        self.scroll_offset = max(0, min(self.scroll_offset, max_scroll))
+
+        start_y = self._get_task_list_y() - self.scroll_offset
+
+        visible_count = 0
+        for i, task in enumerate(self.all_tasks):
+            card_y = start_y + i * (card_h + 5)
+            if card_y + card_h < self._get_task_list_y():
+                continue
+            if card_y > self.panel_y + self.panel_h - 30:
                 break
+
             card = TaskCard(
-                card_x, card_y + i * (card_h + 5),
+                card_x, card_y,
                 card_w, card_h, task,
                 on_edit=self._open_edit_task_form,
                 on_delete=self._delete_task,
                 on_status_change=self._change_task_status
             )
             self.task_cards.append(card)
+            visible_count += 1
 
     def handle_event(self, event):
         if not self.visible:
@@ -676,6 +698,18 @@ class TaskManagerUI:
                 self.close()
                 return True
 
+        if event.type == pygame.MOUSEWHEEL:
+            if not self.form_visible:
+                list_rect = pygame.Rect(
+                    self.panel_x + 20, self._get_task_list_y(),
+                    self.panel_w - 40, self._get_task_list_height()
+                )
+                if list_rect.collidepoint(pygame.mouse.get_pos()):
+                    self.scroll_offset -= event.y * self.scroll_speed
+                    self.scroll_offset = max(0, self.scroll_offset)
+                    self._refresh_task_cards()
+                    return True
+
         if self.form_visible:
             self.title_input.handle_event(event)
             self.desc_input.handle_event(event)
@@ -686,20 +720,19 @@ class TaskManagerUI:
             self.cancel_btn.handle_event(event)
             return True
 
+        dropdown_expanded = (
+            self.status_filter.expanded or
+            self.priority_filter.expanded or
+            self.station_filter.expanded or
+            self.sort_selector.expanded
+        )
+
         self.status_filter.handle_event(event)
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self._refresh_task_cards()
-
         self.priority_filter.handle_event(event)
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self._refresh_task_cards()
-
         self.station_filter.handle_event(event)
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            self._refresh_task_cards()
-
         self.sort_selector.handle_event(event)
-        if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+
+        if event.type == pygame.MOUSEBUTTONUP and event.button == 1 and not dropdown_expanded:
             self._refresh_task_cards()
 
         self.new_task_btn.handle_event(event)
@@ -707,8 +740,9 @@ class TaskManagerUI:
         self.clear_completed_btn.handle_event(event)
         self.close_btn.handle_event(event)
 
-        for card in self.task_cards:
-            card.handle_event(event)
+        if not dropdown_expanded:
+            for card in self.task_cards:
+                card.handle_event(event)
 
         return True
 
@@ -801,12 +835,50 @@ class TaskManagerUI:
             tasks_title = self.font_section.render('任务列表', True, WHITE)
             surface.blit(tasks_title, (self.panel_x + 25, self.panel_y + 195))
 
+            list_y = self._get_task_list_y()
+            list_h = self._get_task_list_height()
+
+            clip_rect = pygame.Rect(
+                self.panel_x + 10, list_y,
+                self.panel_w - 20, list_h
+            )
+
+            old_clip = surface.get_clip()
+            surface.set_clip(clip_rect)
+
             for card in self.task_cards:
                 card.draw(surface)
 
-            if not self.task_cards:
+            surface.set_clip(old_clip)
+
+            total_tasks = len(self.all_tasks) if hasattr(self, 'all_tasks') else 0
+            if total_tasks > 0:
+                scrollbar_x = self.panel_x + self.panel_w - 25
+                scrollbar_y = list_y + 5
+                scrollbar_w = 12
+                scrollbar_h = list_h - 10
+                pygame.draw.rect(surface, (50, 50, 60),
+                                 (scrollbar_x, scrollbar_y, scrollbar_w, scrollbar_h),
+                                 border_radius=6)
+
+                if total_tasks > 0:
+                    card_h = 100
+                    total_content_h = total_tasks * card_h
+                    thumb_h = max(30, scrollbar_h * (list_h / total_content_h))
+                    max_offset = max(1, total_content_h - list_h)
+                    thumb_y = scrollbar_y + (self.scroll_offset / max_offset) * (scrollbar_h - thumb_h)
+                    pygame.draw.rect(surface, YELLOW,
+                                     (scrollbar_x + 2, thumb_y, scrollbar_w - 4, thumb_h),
+                                     border_radius=4)
+
+            if not self.task_cards and total_tasks == 0:
                 no_task_surf = self.font_small.render(
                     '暂无任务，点击"新建任务"创建第一个任务吧！', True, LIGHT_GRAY
                 )
                 surface.blit(no_task_surf,
-                             (self.panel_x + self.panel_w // 2 - 180, self.panel_y + 450))
+                             (self.panel_x + self.panel_w // 2 - 180, list_y + 50))
+
+            if total_tasks > 0:
+                count_text = f'共 {total_tasks} 个任务'
+                count_surf = self.font_small.render(count_text, True, LIGHT_GRAY)
+                surface.blit(count_surf, (self.panel_x + self.panel_w - 150, self.panel_y + 195))

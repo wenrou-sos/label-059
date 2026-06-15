@@ -1,0 +1,97 @@
+{
+  "achievements": {
+    "first_correct": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9721305
+    },
+    "combo_5": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9742482
+    },
+    "combo_10": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.97492
+    },
+    "combo_20": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9759042
+    },
+    "parts_10": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.973481
+    },
+    "parts_50": {
+      "unlocked": false,
+      "unlocked_at": null
+    },
+    "parts_100": {
+      "unlocked": false,
+      "unlocked_at": null
+    },
+    "assembly_20": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9774332
+    },
+    "qa_20": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9774911
+    },
+    "packaging_20": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9775438
+    },
+    "time_1min": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.978145
+    },
+    "time_3min": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9787276
+    },
+    "time_5min": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.979304
+    },
+    "score_100": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9800336
+    },
+    "score_500": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9808006
+    },
+    "score_1000": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9816813
+    },
+    "perfect_start": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.98249
+    },
+    "games_5": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9832666
+    },
+    "no_miss_50": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.9839582
+    },
+    "all_types": {
+      "unlocked": true,
+      "unlocked_at": 1781486165.98505
+    }
+  },
+  "stats": {
+    "total_parts_processed": 0,
+    "total_parts_correct": 10,
+    "total_parts_wrong": 0,
+    "max_combo": 20,
+    "max_score": 1000,
+    "max_game_time": 0,
+    "assembly_parts": 20,
+    "qa_parts": 20,
+    "packaging_parts": 20,
+    "games_played": 5,
+    "max_time_played": 300
+  }
+}

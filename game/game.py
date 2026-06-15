@@ -15,6 +15,7 @@ from game.part import Part
 from game.station import Station
 from game.task_manager import TaskManager, TaskStatus, TaskPriority
 from game.ui_components import TaskManagerUI
+from game.achievements import AchievementManager
 
 
 class GameState:
@@ -23,6 +24,7 @@ class GameState:
     PAUSED = 'paused'
     GAME_OVER = 'game_over'
     TASK_MANAGER = 'task_manager'
+    ACHIEVEMENTS = 'achievements'
 
 
 class Game:
@@ -46,12 +48,25 @@ class Game:
 
         self.dragged_part = None
         self.selected_part = None
+        self.current_combo = 0
+
+        self.achievement_manager = AchievementManager()
+        self.achievement_popups = []
+        self.achievement_manager.add_listener(self._on_achievement_unlocked)
 
         self._init_stations()
         self._init_tasks()
         self._init_fonts()
         self._init_effects()
         self._init_ui()
+
+    def _on_achievement_unlocked(self, achievement):
+        self.achievement_popups.append({
+            'achievement': achievement,
+            'start_time': pygame.time.get_ticks(),
+            'duration': 4000,
+            'alpha': 255
+        })
 
     def _init_stations(self):
         for i, station_type in enumerate(['assembly', 'qa', 'packaging']):
@@ -111,12 +126,15 @@ class Game:
         self.game_time = 0
         self.dragged_part = None
         self.selected_part = None
+        self.current_combo = 0
         self.effects.clear()
         self.score_popups.clear()
         for station in self.stations:
             station.parts_processed = 0
         self.task_manager.clear_all()
         self._init_tasks()
+        self.achievement_manager.reset_session_stats()
+        self.achievement_manager.update_stat('games_played')
 
     def handle_event(self, event):
         if self.state == GameState.MENU:
@@ -129,16 +147,33 @@ class Game:
             self._handle_game_over_event(event)
         elif self.state == GameState.TASK_MANAGER:
             self.task_manager_ui.handle_event(event)
+        elif self.state == GameState.ACHIEVEMENTS:
+            self._handle_achievements_event(event)
 
     def _handle_menu_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_SPACE or event.key == pygame.K_RETURN:
                 self.state = GameState.PLAYING
                 self.reset()
+            elif event.key == pygame.K_a:
+                self.state = GameState.ACHIEVEMENTS
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:
-                self.state = GameState.PLAYING
-                self.reset()
+                pos = event.pos
+                ach_btn_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, 570, 200, 50)
+                if ach_btn_rect.collidepoint(pos):
+                    self.state = GameState.ACHIEVEMENTS
+                else:
+                    self.state = GameState.PLAYING
+                    self.reset()
+
+    def _handle_achievements_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE or event.key == pygame.K_a:
+                self.state = GameState.MENU
+        elif event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1:
+                self.state = GameState.MENU
 
     def _handle_playing_event(self, event):
         if event.type == pygame.KEYDOWN:
@@ -235,13 +270,33 @@ class Game:
 
         if station.can_accept(part):
             self.score += SCORE_CORRECT
+            self.current_combo += 1
             station.flash_correct()
             part.processed = True
             self._add_score_popup(part.x, part.y, f"+{SCORE_CORRECT}", GREEN)
             self.task_manager.update_progress(station_type=station.station_type)
             self.parts.remove(part)
+
+            am = self.achievement_manager
+            am.update_stat('total_parts_processed')
+            am.update_stat('total_parts_correct')
+            am.update_stat('perfect_streak_start')
+            am.update_stat('no_miss_streak')
+            am.update_stat(f'{station.station_type}_parts')
+            am.update_stat(f'{station.station_type}_parts_this')
+
+            if self.current_combo > am.stats.get('max_combo', 0):
+                am.update_stat('max_combo', value=self.current_combo)
+            if self.score > am.stats.get('max_score', 0):
+                am.update_stat('max_score', value=self.score)
+
+            am.check_all()
         else:
             self.score += SCORE_WRONG
+            self.current_combo = 0
+            self.achievement_manager.stats['perfect_streak_start'] = 0
+            self.achievement_manager.stats['no_miss_streak'] = 0
+            self.achievement_manager.update_stat('total_parts_wrong')
             station.flash_wrong()
             part.return_to_origin()
             self._add_score_popup(part.x, part.y, f"{SCORE_WRONG}", RED)
@@ -262,10 +317,17 @@ class Game:
         elif self.state == GameState.TASK_MANAGER:
             self.task_manager_ui.update(dt)
         self._update_effects()
+        self._update_achievement_popups(dt)
 
     def _update_game(self):
         dt = self.clock.get_rawtime()
         self.game_time += dt
+
+        game_seconds = self.game_time // 1000
+        if game_seconds > self.achievement_manager.stats.get('max_time_played', 0) and game_seconds > 0:
+            self.achievement_manager.update_stat('max_time_played', value=game_seconds)
+            if game_seconds % 30 == 0:
+                self.achievement_manager.check_all()
 
         if self.game_time - self.last_spawn_time > self.spawn_interval:
             self._spawn_part()
@@ -275,9 +337,16 @@ class Game:
             part.update(self.speed)
             if part.missed:
                 self.missed_parts += 1
+                self.current_combo = 0
+                self.achievement_manager.stats['perfect_streak_start'] = 0
+                self.achievement_manager.stats['no_miss_streak'] = 0
                 self.parts.remove(part)
                 self._add_score_popup(SCREEN_WIDTH - 100, 400, "MISS!", RED)
                 if self.missed_parts >= MAX_MISSED_PARTS:
+                    game_seconds = self.game_time // 1000
+                    if game_seconds > self.achievement_manager.stats.get('max_time_played', 0):
+                        self.achievement_manager.update_stat('max_time_played', value=game_seconds)
+                    self.achievement_manager.check_all()
                     self.state = GameState.GAME_OVER
 
         for station in self.stations:
@@ -302,6 +371,15 @@ class Game:
             if popup['alpha'] <= 0:
                 self.score_popups.remove(popup)
 
+    def _update_achievement_popups(self, dt):
+        now = pygame.time.get_ticks()
+        for popup in self.achievement_popups[:]:
+            elapsed = now - popup['start_time']
+            if elapsed > popup['duration']:
+                self.achievement_popups.remove(popup)
+            elif elapsed > popup['duration'] - 500:
+                popup['alpha'] = max(0, 255 * (1 - (elapsed - (popup['duration'] - 500)) / 500))
+
     def draw(self):
         self.screen.fill(DARK_GRAY)
 
@@ -318,8 +396,11 @@ class Game:
         elif self.state == GameState.TASK_MANAGER:
             self._draw_game()
             self.task_manager_ui.draw(self.screen)
+        elif self.state == GameState.ACHIEVEMENTS:
+            self._draw_achievements()
 
         self._draw_score_popups()
+        self._draw_achievement_popups()
         pygame.display.flip()
 
     def _draw_menu(self):
@@ -351,6 +432,18 @@ class Game:
 
         self._draw_legend()
 
+        ach_btn_rect = pygame.Rect(SCREEN_WIDTH // 2 - 100, 570, 200, 50)
+        pygame.draw.rect(self.screen, (60, 60, 80), ach_btn_rect, border_radius=10)
+        pygame.draw.rect(self.screen, YELLOW, ach_btn_rect, 2, border_radius=10)
+        ach_btn_text = self.font_medium.render('🏆 成就展柜 (A)', True, YELLOW)
+        ach_btn_rect2 = ach_btn_text.get_rect(center=ach_btn_rect.center)
+        self.screen.blit(ach_btn_text, ach_btn_rect2)
+
+        unlocked, total = self.achievement_manager.get_progress()
+        progress_text = self.font_small.render(f'已解锁: {unlocked}/{total}', True, WHITE)
+        progress_rect = progress_text.get_rect(centerx=SCREEN_WIDTH // 2, y=630)
+        self.screen.blit(progress_text, progress_rect)
+
     def _draw_legend(self):
         legend_x = 700
         legend_y = 220
@@ -381,6 +474,129 @@ class Game:
             station_text = self.font_small.render(station_name, True, WHITE)
             self.screen.blit(station_text, (legend_x + 160, legend_y + 40 + row * 35))
             row += 1
+
+    def _draw_achievements(self):
+        bg_rect = pygame.Rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
+        pygame.draw.rect(self.screen, (25, 25, 35), bg_rect)
+
+        title = self.font_large.render('🏆 成就展柜', True, YELLOW)
+        title_rect = title.get_rect(centerx=SCREEN_WIDTH // 2, y=40)
+        self.screen.blit(title, title_rect)
+
+        unlocked, total = self.achievement_manager.get_progress()
+        progress_text = self.font_medium.render(f'解锁进度: {unlocked}/{total}', True, WHITE)
+        progress_rect = progress_text.get_rect(centerx=SCREEN_WIDTH // 2, y=100)
+        self.screen.blit(progress_text, progress_rect)
+
+        progress_bar_bg = pygame.Rect(SCREEN_WIDTH // 2 - 200, 140, 400, 25)
+        pygame.draw.rect(self.screen, (50, 50, 60), progress_bar_bg, border_radius=8)
+        progress_w = 396 * (unlocked / max(1, total))
+        pygame.draw.rect(self.screen, GREEN,
+                         (SCREEN_WIDTH // 2 - 198, 142, progress_w, 21),
+                         border_radius=6)
+
+        back_hint = self.font_small.render('按 ESC 或 A 返回主菜单 / 点击任意位置返回', True, LIGHT_GRAY)
+        back_hint_rect = back_hint.get_rect(centerx=SCREEN_WIDTH // 2, y=175)
+        self.screen.blit(back_hint, back_hint_rect)
+
+        all_achievements = self.achievement_manager.get_all_achievements()
+
+        cols = 4
+        rows = 5
+        card_w = 250
+        card_h = 100
+        gap_x = 30
+        gap_y = 20
+        start_x = (SCREEN_WIDTH - (cols * card_w + (cols - 1) * gap_x)) // 2
+        start_y = 210
+
+        for idx, ach in enumerate(all_achievements):
+            if idx >= cols * rows:
+                break
+            col = idx % cols
+            row = idx // cols
+
+            card_x = start_x + col * (card_w + gap_x)
+            card_y = start_y + row * (card_h + gap_y)
+            card_rect = pygame.Rect(card_x, card_y, card_w, card_h)
+
+            if ach.unlocked:
+                bg_color = (50, 60, 80)
+                border_color = YELLOW
+                text_color = WHITE
+                icon_alpha = 255
+            else:
+                bg_color = (40, 40, 45)
+                border_color = GRAY
+                text_color = GRAY
+                icon_alpha = 100
+
+            pygame.draw.rect(self.screen, bg_color, card_rect, border_radius=8)
+            pygame.draw.rect(self.screen, border_color, card_rect, 2, border_radius=8)
+
+            icon_font = pygame.font.SysFont('segoeuisymbol', 36)
+            icon_text = icon_font.render(ach.icon, True, text_color)
+            icon_text.set_alpha(icon_alpha)
+            icon_rect = icon_text.get_rect(centerx=card_x + 35, centery=card_y + card_h // 2)
+            self.screen.blit(icon_text, icon_rect)
+
+            name_surf = self.font_small.render(ach.name, True, text_color)
+            self.screen.blit(name_surf, (card_x + 70, card_y + 15))
+
+            desc_font = pygame.font.SysFont('microsoftyaheimicrosoftyaheiui', 13)
+            desc_surf = desc_font.render(ach.description, True, text_color)
+            desc_rect = desc_surf.get_rect(x=card_x + 70, y=card_y + 45)
+            if desc_rect.width > card_w - 80:
+                for end in range(len(ach.description), 0, -1):
+                    test_desc = ach.description[:end] + '...'
+                    desc_surf = desc_font.render(test_desc, True, text_color)
+                    if desc_surf.get_width() <= card_w - 80:
+                        break
+            self.screen.blit(desc_surf, (card_x + 70, card_y + 45))
+
+            if ach.unlocked and ach.unlocked_at:
+                import time
+                unlock_date = time.strftime('%Y-%m-%d', time.localtime(ach.unlocked_at))
+                date_font = pygame.font.SysFont('microsoftyaheimicrosoftyaheiui', 10)
+                date_surf = date_font.render(unlock_date, True, LIGHT_GRAY)
+                self.screen.blit(date_surf, (card_x + 70, card_y + card_h - 22))
+
+    def _draw_achievement_popups(self):
+        for i, popup in enumerate(self.achievement_popups):
+            ach = popup['achievement']
+            popup_w = 360
+            popup_h = 90
+            popup_x = SCREEN_WIDTH - popup_w - 30
+            popup_y = 80 + i * (popup_h + 15)
+
+            popup_rect = pygame.Rect(popup_x, popup_y, popup_w, popup_h)
+
+            alpha_surface = pygame.Surface((popup_w, popup_h), pygame.SRCALPHA)
+            pygame.draw.rect(alpha_surface, (40, 45, 60, popup['alpha']),
+                             (0, 0, popup_w, popup_h), border_radius=12)
+            pygame.draw.rect(alpha_surface, (*YELLOW[:3], popup['alpha']),
+                             (0, 0, popup_w, popup_h), 3, border_radius=12)
+            self.screen.blit(alpha_surface, popup_rect.topleft)
+
+            icon_font = pygame.font.SysFont('segoeuisymbol', 40)
+            icon_surf = icon_font.render(ach.icon, True, YELLOW)
+            icon_surf.set_alpha(popup['alpha'])
+            icon_rect = icon_surf.get_rect(centerx=popup_x + 50, centery=popup_y + popup_h // 2)
+            self.screen.blit(icon_surf, icon_rect)
+
+            title_font = pygame.font.SysFont('microsoftyaheimicrosoftyaheiui', 16, bold=True)
+            title_surf = title_font.render('成就解锁!', True, YELLOW)
+            title_surf.set_alpha(popup['alpha'])
+            self.screen.blit(title_surf, (popup_x + 90, popup_y + 12))
+
+            name_surf = self.font_medium.render(ach.name, True, WHITE)
+            name_surf.set_alpha(popup['alpha'])
+            self.screen.blit(name_surf, (popup_x + 90, popup_y + 38))
+
+            desc_font = pygame.font.SysFont('microsoftyaheimicrosoftyaheiui', 12)
+            desc_surf = desc_font.render(ach.description, True, LIGHT_GRAY)
+            desc_surf.set_alpha(popup['alpha'])
+            self.screen.blit(desc_surf, (popup_x + 90, popup_y + 65))
 
     def _draw_game(self):
         self._draw_background()
